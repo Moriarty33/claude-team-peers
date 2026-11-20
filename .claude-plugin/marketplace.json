@@ -1,0 +1,12 @@
+{
+  "name": "claude-team-peers",
+  "owner": { "name": "Moriarty33" },
+  "description": "Team chat for Claude Code sessions: channels, direct messages and presence over Azure Service Bus",
+  "plugins": [
+    {
+      "name": "team-peers",
+      "source": "./plugins/team-peers",
+      "description": "Peer chat between teammates' Claude Code sessions over Azure Service Bus"
+    }
+  ]
+}

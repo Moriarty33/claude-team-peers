@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"$TEAM_PEERS_LISTEN\" != 1 ] || node \"${CLAUDE_PLUGIN_ROOT}/hooks/confirm-actions.ts\" || { echo 'team-peers: confirmation hook failed, action blocked' >&2; exit 2; }",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
