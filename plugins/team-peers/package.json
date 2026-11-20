@@ -1,6 +1,6 @@
 {
   "name": "team-peers",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Chat between teammates' Claude Code sessions over Azure Service Bus, delivered through Claude Code Channels",
   "type": "module",

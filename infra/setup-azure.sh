@@ -135,7 +135,9 @@ for member in ${MEMBERS[@]+"${MEMBERS[@]}"}; do
     --role "Azure Service Bus Data Receiver" --scope "$TOPIC_ID/subscriptions/$HANDLE"
   run az role assignment create --assignee-object-id "$OID" --assignee-principal-type User \
     --role "Key Vault Crypto User" --scope "$KV_ID/keys/$KEY"
-  echo "config for $HANDLE: {\"handle\": \"$HANDLE\", \"namespace\": \"$NS\", \"keyVaultUrl\": \"https://$KV.vault.azure.net\"}"
+  echo "--- ~/.claude/team-peers/.env for $HANDLE (chmod 600):"
+  printf 'TEAM_PEERS_HANDLE=%s\nTEAM_PEERS_NAMESPACE=%s\nTEAM_PEERS_KEY_VAULT_URL=https://%s.vault.azure.net\n' \
+    "$HANDLE" "$NS" "$KV"
 done
 
 for member in ${REMOVALS[@]+"${REMOVALS[@]}"}; do

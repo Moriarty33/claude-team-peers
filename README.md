@@ -80,7 +80,7 @@ infra/setup-azure.sh --subscription <subscription> --resource-group <rg> --locat
 
 The script prints the `az` commands; add `--apply` to run them. It is safe to run again, for example to
 add a member. `--remove-member bob=bob@example.com` deletes a member's subscription and roles. For each
-member it prints the `config.json` to hand over.
+member it prints the `.env` to hand over through a channel you trust.
 
 ## Set up each developer
 
@@ -91,14 +91,13 @@ member it prints the `config.json` to hand over.
    /plugin install team-peers@claude-team-peers
    ```
 
-2. Create `~/.claude/team-peers/config.json` with the values the admin printed:
+2. Save the `.env` the admin sent you as `~/.claude/team-peers/.env` and run
+   `chmod 600 ~/.claude/team-peers/.env`:
 
-   ```json
-   {
-     "handle": "alice",
-     "namespace": "<namespace>",
-     "keyVaultUrl": "https://<key-vault>.vault.azure.net"
-   }
+   ```bash
+   TEAM_PEERS_HANDLE=alice
+   TEAM_PEERS_NAMESPACE=<namespace>
+   TEAM_PEERS_KEY_VAULT_URL=https://<key-vault>.vault.azure.net
    ```
 
 3. Run `az login` with the account that got the role assignments.
@@ -125,18 +124,21 @@ waits for your approval.
 
 ## Configuration
 
-| Variable | `config.json` key | Default | Meaning |
-|---|---|---|---|
-| `TEAM_PEERS_HANDLE` | `handle` | required | Your handle and subscription name |
-| `TEAM_PEERS_NAMESPACE` | `namespace` | required | Namespace name or full host name |
-| `TEAM_PEERS_KEY_VAULT_URL` | `keyVaultUrl` | required | Key Vault holding the team key |
-| `TEAM_PEERS_KEY_NAME` | `keyName` | `team-peers` | Name of the Key Vault key |
-| `TEAM_PEERS_TOPIC` | `topic` | `team-peers` | Topic name |
-| `TEAM_PEERS_MESSAGE_TTL_HOURS` | `messageTtlHours` | `24` | How long a message waits for an offline listener |
-| `TEAM_PEERS_LISTEN` | | unset | `1` makes this session the listener |
-| `TEAM_PEERS_STATE_DIR` | | `~/.claude/team-peers` | Local state: channels, history, presence |
-| `TEAM_PEERS_CONNECTION_STRING` | `connectionString` | | Local emulator only |
-| `TEAM_PEERS_LOCAL_KEY` | `localKey` | | Emulator only: 32 random bytes, base64, instead of Key Vault |
+Settings come from `~/.claude/team-peers/.env`; the same variables in the process environment win over it.
+`TEAM_PEERS_LISTEN` and `TEAM_PEERS_STATE_DIR` are read from the process environment only.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `TEAM_PEERS_HANDLE` | required | Your handle and subscription name |
+| `TEAM_PEERS_NAMESPACE` | required | Namespace name or full host name |
+| `TEAM_PEERS_KEY_VAULT_URL` | required | Key Vault holding the team key |
+| `TEAM_PEERS_KEY_NAME` | `team-peers` | Name of the Key Vault key |
+| `TEAM_PEERS_TOPIC` | `team-peers` | Topic name |
+| `TEAM_PEERS_MESSAGE_TTL_HOURS` | `24` | How long a message waits for an offline listener |
+| `TEAM_PEERS_LISTEN` | unset | `1` makes this session the listener |
+| `TEAM_PEERS_STATE_DIR` | `~/.claude/team-peers` | Where `.env`, channels, history and presence live |
+| `TEAM_PEERS_CONNECTION_STRING` | | Local emulator only |
+| `TEAM_PEERS_LOCAL_KEY` | | Emulator only: 32 random bytes, base64, instead of Key Vault |
 
 ## Local development
 
