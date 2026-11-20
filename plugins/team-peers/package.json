@@ -1,6 +1,6 @@
 {
   "name": "team-peers",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Chat between teammates' Claude Code sessions over Azure Service Bus, delivered through Claude Code Channels",
   "type": "module",
@@ -12,9 +12,11 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "test": "node --test test/*.test.ts",
-    "smoke": "node test/smoke.e2e.ts"
+    "smoke": "node test/smoke.e2e.ts",
+    "register": "node test/register.e2e.ts"
   },
   "dependencies": {
+    "@azure/arm-servicebus": "7.0.0",
     "@azure/identity": "4.14.1",
     "@azure/keyvault-keys": "4.10.2",
     "@azure/service-bus": "7.10.0",

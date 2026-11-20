@@ -22,6 +22,7 @@ EOF
     '--rotate-after DURATION' 'ISO 8601 age that triggers key rotation (default: P30D)' \
     '--key-expiry DURATION' 'ISO 8601 lifetime of each key version (default: P90D)' \
     '--message-ttl DURATION' 'ISO 8601 message lifetime (default: P1D)' \
+    '--group NAME' 'Let an Entra group join with az login alone: roles on the whole topic and key (repeatable)' \
     '--member HANDLE=UPN' 'Add a member, for example alice=alice@example.com (repeatable)' \
     '--remove-member HANDLE=UPN' "Delete the member's subscription and role assignments (repeatable)" \
     '--apply' 'Run the commands instead of printing them'
@@ -29,7 +30,7 @@ EOF
 
 RG="" NS="" KV="" SUBSCRIPTION="" LOCATION="" TOPIC="team-peers" KEY="team-peers"
 ROTATE="P30D" EXPIRY="P90D" TTL="P1D" APPLY=0
-MEMBERS=() REMOVALS=()
+MEMBERS=() REMOVALS=() TEAM_GROUPS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     "--resource-group") RG="$2"; shift 2 ;;
@@ -42,6 +43,7 @@ while [ $# -gt 0 ]; do
     "--rotate-after") ROTATE="$2"; shift 2 ;;
     "--key-expiry") EXPIRY="$2"; shift 2 ;;
     "--message-ttl") TTL="$2"; shift 2 ;;
+    "--group") TEAM_GROUPS+=("$2"); shift 2 ;;
     "--member") MEMBERS+=("$2"); shift 2 ;;
     "--remove-member") REMOVALS+=("$2"); shift 2 ;;
     "--apply") APPLY=1; shift ;;
@@ -117,6 +119,17 @@ fi
 POLICY="{\"lifetimeActions\":[{\"trigger\":{\"timeAfterCreate\":\"$ROTATE\"},\"action\":{\"type\":\"Rotate\"}}],\"attributes\":{\"expiryTime\":\"$EXPIRY\"}}"
 run_until_authorized az keyvault key rotation-policy update --vault-name "$KV" -n "$KEY" --value "$POLICY"
 
+# A group-wide Receiver role on the topic lets members read each other's subscriptions: privacy by convention.
+for group in ${TEAM_GROUPS[@]+"${TEAM_GROUPS[@]}"}; do
+  GID="$(az ad group show --group "$group" --query id -o tsv 2>/dev/null || echo "<object id of $group>")"
+  for role in "Azure Service Bus Data Sender" "Azure Service Bus Data Receiver"; do
+    run az role assignment create --assignee-object-id "$GID" --assignee-principal-type Group \
+      --role "$role" --scope "$TOPIC_ID"
+  done
+  run az role assignment create --assignee-object-id "$GID" --assignee-principal-type Group \
+    --role "Key Vault Crypto User" --scope "$KV_ID/keys/$KEY"
+done
+
 for member in ${MEMBERS[@]+"${MEMBERS[@]}"}; do
   split_member "$member"
   OID="$(object_id "$UPN")"
@@ -149,5 +162,12 @@ for member in ${REMOVALS[@]+"${REMOVALS[@]}"}; do
   run az role assignment delete --assignee "$OID" --role "Key Vault Crypto User" --scope "$KV_ID/keys/$KEY"
   run "${SUB[@]}" delete "${NS_ARGS[@]}" --topic-name "$TOPIC" -n "$HANDLE"
 done
+
+if [ ${#TEAM_GROUPS[@]} -gt 0 ]; then
+  echo "--- team ~/.claude/team-peers/.env for self-registration (chmod 600; the handle comes from az login):"
+  printf 'TEAM_PEERS_NAMESPACE=%s\nTEAM_PEERS_KEY_VAULT_URL=https://%s.vault.azure.net\n' "$NS" "$KV"
+  printf 'TEAM_PEERS_AZURE_SUBSCRIPTION_ID=%s\nTEAM_PEERS_RESOURCE_GROUP=%s\n' \
+    "$(az account show --query id -o tsv)" "$RG"
+fi
 
 [ "$APPLY" = 1 ] || echo "Dry run only. Re-run with --apply to make these changes."

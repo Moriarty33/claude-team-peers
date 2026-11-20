@@ -8,16 +8,22 @@ export type Encryption =
   | { kind: 'keyvault'; vaultUrl: string; keyName: string }
   | { kind: 'local'; key: string }
 
+export type Registration = { subscriptionId: string; resourceGroup: string }
+
 export type Config = {
   handle: string
   topic: string
   namespace?: string
   connectionString?: string
   encryption: Encryption
+  registration?: Registration
   listen: boolean
   stateDir: string
   messageTtlMs: number
 }
+
+/** What the settings say before the handle is known; the handle may come from the Azure sign-in. */
+export type LoadedConfig = Omit<Config, 'handle' | 'stateDir'> & { handle?: string; stateRoot: string }
 
 type Settings = Record<string, string>
 
@@ -60,14 +66,29 @@ function encryptionFrom(settings: Settings, emulator: boolean): Encryption {
   )
 }
 
+function registrationFrom(settings: Settings): Registration | undefined {
+  const subscriptionId = settings.TEAM_PEERS_AZURE_SUBSCRIPTION_ID
+  const resourceGroup = settings.TEAM_PEERS_RESOURCE_GROUP
+  if (Boolean(subscriptionId) !== Boolean(resourceGroup)) {
+    throw new Error('Set both TEAM_PEERS_AZURE_SUBSCRIPTION_ID and TEAM_PEERS_RESOURCE_GROUP, or neither')
+  }
+  return subscriptionId && resourceGroup ? { subscriptionId, resourceGroup } : undefined
+}
+
+export function resolveConfig(loaded: LoadedConfig, handle: string): Config {
+  const { stateRoot: root, handle: _ignored, ...rest } = loaded
+  return { ...rest, handle, stateDir: join(root, handle) }
+}
+
 /** Reads ~/.claude/team-peers/.env; variables in the process environment win over the file. */
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): LoadedConfig {
   const root = stateRoot(env)
   const settings = { ...readEnvFile(root), ...ownSettings(env) }
-  const handle = normalizeHandle(settings.TEAM_PEERS_HANDLE ?? '')
+  const handle = settings.TEAM_PEERS_HANDLE ? normalizeHandle(settings.TEAM_PEERS_HANDLE) : undefined
 
   const namespace = settings.TEAM_PEERS_NAMESPACE
   const connectionString = settings.TEAM_PEERS_CONNECTION_STRING
+  if (connectionString && !handle) throw new Error('Set TEAM_PEERS_HANDLE when using the emulator')
   if (connectionString && !/UseDevelopmentEmulator=true/i.test(connectionString)) {
     throw new Error(
       'Connection strings are accepted only for the local emulator; use TEAM_PEERS_NAMESPACE with az login',
@@ -89,8 +110,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     namespace,
     connectionString,
     encryption: encryptionFrom(settings, Boolean(connectionString)),
+    registration: connectionString ? undefined : registrationFrom(settings),
     listen: env.TEAM_PEERS_LISTEN === '1',
-    stateDir: join(root, handle),
+    stateRoot: root,
     messageTtlMs: ttlHours * 3_600_000,
   }
 }

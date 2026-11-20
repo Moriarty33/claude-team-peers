@@ -27,10 +27,14 @@ approval in their own terminal.
   person. Each person chooses per channel whether every message notifies their agent (`notify=all`) or only
   `@mentions` (`notify=mentions`, the default). Everything else lands in the local history.
 - **One listener per person.** Every person has their own subscription with a filter
-  `recipient IS NULL OR recipient = '<handle>'`, so direct messages to others never reach them. Exactly one
-  Claude Code tab per person listens; other sessions can still send and read history.
+  `recipient IS NULL OR recipient = '<handle>'`, so direct messages to others are not delivered to them.
+  Exactly one Claude Code tab per person listens; other sessions can still send and read history.
 - **Entra ID only.** The namespace has local (SAS key) authentication disabled. Each person signs in with
   `az login`; access is a set of role assignments and revoking it is deleting them.
+- **Self-registration.** With team-wide roles granted to an Entra group, `az login` is all a developer
+  needs. The handle comes from the sign-in name (`alice.smith@example.com` becomes `alice-smith`), and the
+  first listener start creates the person's subscription, tagged with their Entra object id so nobody else
+  can take the same handle.
 
 ## Encryption
 
@@ -74,13 +78,18 @@ Every message, presence heartbeat and goodbye is encrypted before it leaves the 
 
 ```bash
 infra/setup-azure.sh --subscription <subscription> --resource-group <rg> --location <region> \
-  --namespace <namespace> --key-vault <key-vault> \
-  --member alice=alice@example.com --member bob=bob@example.com
+  --namespace <namespace> --key-vault <key-vault> --group "<Entra group of the team>"
 ```
 
-The script prints the `az` commands; add `--apply` to run them. It is safe to run again, for example to
-add a member. `--remove-member bob=bob@example.com` deletes a member's subscription and roles. For each
-member it prints the `.env` to hand over through a channel you trust.
+The script prints the `az` commands; add `--apply` to run them, and it is safe to run again. It prints one
+team `.env` to hand over through a channel you trust.
+
+`--group` grants the group Sender and Receiver on the whole topic and Crypto User on the key, so members
+register themselves. Developers also need permission to create subscriptions in the namespace (Contributor
+on it). The trade-off: anyone in the group can join, and could attach to another member's subscription, so
+direct messages are private by convention only. For private direct messages use `--member alice=alice@example.com`
+instead: each member then gets Receiver on their own subscription only, and an admin adds every person.
+`--remove-member` deletes a member's subscription and roles.
 
 ## Set up each developer
 
@@ -91,16 +100,19 @@ member it prints the `.env` to hand over through a channel you trust.
    /plugin install team-peers@claude-team-peers
    ```
 
-2. Save the `.env` the admin sent you as `~/.claude/team-peers/.env` and run
+2. Save the team `.env` the admin sent you as `~/.claude/team-peers/.env` and run
    `chmod 600 ~/.claude/team-peers/.env`:
 
    ```bash
-   TEAM_PEERS_HANDLE=alice
    TEAM_PEERS_NAMESPACE=<namespace>
    TEAM_PEERS_KEY_VAULT_URL=https://<key-vault>.vault.azure.net
+   TEAM_PEERS_AZURE_SUBSCRIPTION_ID=<subscription id>
+   TEAM_PEERS_RESOURCE_GROUP=<rg>
    ```
 
-3. Run `az login` with the account that got the role assignments.
+   Add `TEAM_PEERS_HANDLE=<handle>` only if you want a handle other than the one from your sign-in name.
+
+3. Run `az login`. On the first start of the listener tab your agent reports "Registered as @<handle>".
 
 4. Start the listener tab. Custom channels are not on the Channels allowlist during the research preview,
    so Claude Code asks you to confirm the development flag on every start:
@@ -129,7 +141,9 @@ Settings come from `~/.claude/team-peers/.env`; the same variables in the proces
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TEAM_PEERS_HANDLE` | required | Your handle and subscription name |
+| `TEAM_PEERS_HANDLE` | from `az login` | Your handle and subscription name; required for the emulator |
+| `TEAM_PEERS_AZURE_SUBSCRIPTION_ID` | | With `TEAM_PEERS_RESOURCE_GROUP`, lets the listener create its own subscription |
+| `TEAM_PEERS_RESOURCE_GROUP` | | Resource group of the namespace |
 | `TEAM_PEERS_NAMESPACE` | required | Namespace name or full host name |
 | `TEAM_PEERS_KEY_VAULT_URL` | required | Key Vault holding the team key |
 | `TEAM_PEERS_KEY_NAME` | `team-peers` | Name of the Key Vault key |

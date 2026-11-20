@@ -19,7 +19,12 @@ const [A, B] = (process.env.TEAM_PEERS_SMOKE_HANDLES ?? 'alice,bob').split(',') 
 const root = mkdtempSync(join(tmpdir(), 'team-peers-smoke-'))
 
 const target: Record<string, string> = NAMESPACE
-  ? { TEAM_PEERS_NAMESPACE: NAMESPACE, TEAM_PEERS_KEY_VAULT_URL: process.env.TEAM_PEERS_KEY_VAULT_URL ?? '' }
+  ? {
+      TEAM_PEERS_NAMESPACE: NAMESPACE,
+      TEAM_PEERS_KEY_VAULT_URL: process.env.TEAM_PEERS_KEY_VAULT_URL ?? '',
+      TEAM_PEERS_AZURE_SUBSCRIPTION_ID: process.env.TEAM_PEERS_AZURE_SUBSCRIPTION_ID ?? '',
+      TEAM_PEERS_RESOURCE_GROUP: process.env.TEAM_PEERS_RESOURCE_GROUP ?? '',
+    }
   : { TEAM_PEERS_CONNECTION_STRING: EMULATOR, TEAM_PEERS_LOCAL_KEY: randomBytes(32).toString('base64') }
 
 type ChannelEvent = { content: string; meta: Record<string, string> }

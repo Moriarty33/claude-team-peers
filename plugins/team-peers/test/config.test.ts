@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import { loadConfig } from '../server/config.ts'
+import { loadConfig, resolveConfig } from '../server/config.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'team-peers-config-'))
 after(() => rmSync(root, { recursive: true, force: true }))
@@ -33,8 +33,34 @@ describe('loadConfig', () => {
       vaultUrl: 'https://kv-example.vault.azure.net',
       keyName: 'team-peers',
     })
-    assert.equal(config.stateDir, join(dir, 'alice'))
+    assert.equal(resolveConfig(config, 'alice').stateDir, join(dir, 'alice'))
     assert.equal(config.listen, false)
+    assert.equal(config.registration, undefined)
+  })
+
+  it('leaves the handle to the Azure sign-in and reads the registration target', () => {
+    const dir = withEnvFile([
+      'TEAM_PEERS_NAMESPACE=ns-example',
+      'TEAM_PEERS_KEY_VAULT_URL=https://kv-example.vault.azure.net',
+      'TEAM_PEERS_AZURE_SUBSCRIPTION_ID=sub-1',
+      'TEAM_PEERS_RESOURCE_GROUP=rg-1',
+    ])
+    const config = loadConfig({ TEAM_PEERS_STATE_DIR: dir })
+    assert.equal(config.handle, undefined)
+    assert.deepEqual(config.registration, { subscriptionId: 'sub-1', resourceGroup: 'rg-1' })
+  })
+
+  it('wants the registration subscription and resource group together', () => {
+    const dir = withEnvFile([...AZURE, 'TEAM_PEERS_AZURE_SUBSCRIPTION_ID=sub-1'])
+    assert.throws(() => loadConfig({ TEAM_PEERS_STATE_DIR: dir }), /RESOURCE_GROUP/)
+  })
+
+  it('needs an explicit handle for the emulator', () => {
+    const dir = withEnvFile([
+      'TEAM_PEERS_CONNECTION_STRING=Endpoint=sb://localhost;UseDevelopmentEmulator=true;',
+      'TEAM_PEERS_LOCAL_KEY=AAAA',
+    ])
+    assert.throws(() => loadConfig({ TEAM_PEERS_STATE_DIR: dir }), /HANDLE/)
   })
 
   it('lets the process environment override the file, and only it set the listener', () => {

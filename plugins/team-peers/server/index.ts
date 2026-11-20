@@ -1,10 +1,12 @@
-import { runIdle, runPeers } from './app.ts'
-import { type Config, loadConfig } from './config.ts'
+import { type Peer, resolvePeer, runIdle, runPeers } from './app.ts'
+import { loadConfig } from './config.ts'
 
-let config: Config | undefined
+const reason = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+let peer: Peer | undefined
 try {
-  config = loadConfig()
+  peer = await resolvePeer(loadConfig())
 } catch (error) {
-  await runIdle(error instanceof Error ? error.message : String(error))
+  await runIdle(reason(error))
 }
-if (config) await runPeers(config)
+if (peer) await runPeers(peer)
