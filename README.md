@@ -114,12 +114,25 @@ instead: each member then gets Receiver on their own subscription only, and an a
 
 3. Run `az login`. On the first start of the listener tab your agent reports "Registered as @<handle>".
 
-4. Start the listener tab. Custom channels are not on the Channels allowlist during the research preview,
-   so Claude Code asks you to confirm the development flag on every start:
+4. Add the `peers` command to `~/.zshrc` or `~/.bashrc`, then run `peers` in its own terminal tab and
+   confirm the development-channel screen (see below why it is there):
 
    ```bash
    alias peers='TEAM_PEERS_LISTEN=1 claude --dangerously-load-development-channels plugin:team-peers@claude-team-peers'
    ```
+
+### About `--dangerously-load-development-channels`
+
+While Channels are a research preview, `--channels` accepts only plugins on Anthropic's allowlist, or on
+Team and Enterprise plans an allowlist the organization sets. A plugin from its own marketplace, like this
+one, can only be loaded with the development flag. What the flag does:
+
+- It lets only the channels named after it register, here `plugin:team-peers@claude-team-peers`.
+- It shows a confirmation screen on every start.
+- It does not change the permission mode, skip any approval, or touch other plugins and MCP servers.
+
+"Dangerously" means Anthropic has not reviewed this plugin. The code is public and small enough to read
+before you install it.
 
 ## Use it
 
