@@ -3,11 +3,16 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { normalizeHandle } from './protocol.ts'
 
+export type Encryption =
+  | { kind: 'keyvault'; vaultUrl: string; keyName: string }
+  | { kind: 'local'; key: string }
+
 export type Config = {
   handle: string
   topic: string
   namespace?: string
   connectionString?: string
+  encryption: Encryption
   listen: boolean
   stateDir: string
   messageTtlMs: number
@@ -18,6 +23,9 @@ type FileConfig = Partial<{
   topic: string
   namespace: string
   connectionString: string
+  keyVaultUrl: string
+  keyName: string
+  localKey: string
   messageTtlHours: number
 }>
 
@@ -31,6 +39,19 @@ function readFileConfig(root: string): FileConfig {
   } catch {
     return {}
   }
+}
+
+function encryptionFrom(env: NodeJS.ProcessEnv, file: FileConfig, emulator: boolean): Encryption {
+  const vaultUrl = env.TEAM_PEERS_KEY_VAULT_URL || file.keyVaultUrl
+  if (vaultUrl)
+    return { kind: 'keyvault', vaultUrl, keyName: env.TEAM_PEERS_KEY_NAME || file.keyName || 'team-peers' }
+  const key = env.TEAM_PEERS_LOCAL_KEY || file.localKey
+  if (key && emulator) return { kind: 'local', key }
+  throw new Error(
+    emulator
+      ? 'Set TEAM_PEERS_LOCAL_KEY (32 random bytes, base64) or TEAM_PEERS_KEY_VAULT_URL to encrypt messages'
+      : 'Set TEAM_PEERS_KEY_VAULT_URL: messages are encrypted with the team key in Key Vault',
+  )
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -60,6 +81,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     topic: env.TEAM_PEERS_TOPIC || file.topic || 'team-peers',
     namespace,
     connectionString,
+    encryption: encryptionFrom(env, file, Boolean(connectionString)),
     listen: env.TEAM_PEERS_LISTEN === '1',
     stateDir: join(root, handle),
     messageTtlMs: ttlHours * 3_600_000,

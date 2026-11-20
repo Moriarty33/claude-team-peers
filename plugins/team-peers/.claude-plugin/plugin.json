@@ -1,6 +1,6 @@
 {
   "name": "team-peers",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Peer chat between teammates' Claude Code sessions: channels, direct messages and presence over Azure Service Bus, delivered instantly through Claude Code Channels",
   "author": { "name": "Moriarty33" },
   "keywords": ["channels", "team", "chat", "azure-service-bus"]

@@ -4,31 +4,43 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: setup-azure.sh --resource-group RG --namespace NS [options]
+Usage: setup-azure.sh --resource-group RG --namespace NS --key-vault KV [options]
 
-Creates a Standard Service Bus namespace with local (SAS key) auth disabled, one topic,
-one filtered subscription per member and Entra ID role assignments:
-  Azure Service Bus Data Sender on the topic, Azure Service Bus Data Receiver on the member's own subscription.
+Creates a Standard Service Bus namespace with local (SAS key) auth disabled, one topic, a Key Vault
+(RBAC mode) with an RSA key that rotates itself, and per member: a filtered subscription plus the roles
+Azure Service Bus Data Sender (topic), Azure Service Bus Data Receiver (own subscription) and
+Key Vault Crypto User (the key only). Give each person exactly one handle: removing a handle removes
+that person's topic and key roles too.
 
 Options:
 EOF
   printf '  %-27s %s\n' \
-    '--location LOCATION' 'Region for a new namespace (required when it does not exist)' \
+    '--subscription NAME_OR_ID' 'Azure subscription to use; your az default is restored afterwards' \
+    '--location LOCATION' 'Region for new resources (required when they do not exist)' \
     '--topic NAME' 'Topic name (default: team-peers)' \
+    '--key-name NAME' 'Key Vault key name (default: team-peers)' \
+    '--rotate-after DURATION' 'ISO 8601 age that triggers key rotation (default: P30D)' \
+    '--key-expiry DURATION' 'ISO 8601 lifetime of each key version (default: P90D)' \
     '--message-ttl DURATION' 'ISO 8601 message lifetime (default: P1D)' \
     '--member HANDLE=UPN' 'Add a member, for example alice=alice@example.com (repeatable)' \
     '--remove-member HANDLE=UPN' "Delete the member's subscription and role assignments (repeatable)" \
     '--apply' 'Run the commands instead of printing them'
 }
 
-RG="" NS="" LOCATION="" TOPIC="team-peers" TTL="P1D" APPLY=0
+RG="" NS="" KV="" SUBSCRIPTION="" LOCATION="" TOPIC="team-peers" KEY="team-peers"
+ROTATE="P30D" EXPIRY="P90D" TTL="P1D" APPLY=0
 MEMBERS=() REMOVALS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     "--resource-group") RG="$2"; shift 2 ;;
     "--namespace") NS="$2"; shift 2 ;;
+    "--key-vault") KV="$2"; shift 2 ;;
+    "--subscription") SUBSCRIPTION="$2"; shift 2 ;;
     "--location") LOCATION="$2"; shift 2 ;;
     "--topic") TOPIC="$2"; shift 2 ;;
+    "--key-name") KEY="$2"; shift 2 ;;
+    "--rotate-after") ROTATE="$2"; shift 2 ;;
+    "--key-expiry") EXPIRY="$2"; shift 2 ;;
     "--message-ttl") TTL="$2"; shift 2 ;;
     "--member") MEMBERS+=("$2"); shift 2 ;;
     "--remove-member") REMOVALS+=("$2"); shift 2 ;;
@@ -37,10 +49,28 @@ while [ $# -gt 0 ]; do
     *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
 done
-[ -n "$RG" ] && [ -n "$NS" ] || { usage >&2; exit 1; }
+[ -n "$RG" ] && [ -n "$NS" ] && [ -n "$KV" ] || { usage >&2; exit 1; }
+
+if [ -n "$SUBSCRIPTION" ]; then
+  PREVIOUS_SUBSCRIPTION="$(az account show --query id -o tsv)"
+  trap 'az account set --subscription "$PREVIOUS_SUBSCRIPTION"' EXIT
+  az account set --subscription "$SUBSCRIPTION"
+fi
 
 run() {
   if [ "$APPLY" = 1 ]; then echo "+ $*"; "$@"; else printf 'would run:'; printf ' %q' "$@"; echo; fi
+}
+
+# New role assignments take a few minutes to reach Key Vault's data plane.
+run_until_authorized() {
+  if [ "$APPLY" != 1 ]; then run "$@"; return; fi
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    echo "+ $* (attempt $attempt)"
+    if "$@"; then return 0; fi
+    sleep 15
+  done
+  return 1
 }
 
 split_member() {
@@ -56,30 +86,56 @@ object_id() {
   az ad user show --id "$1" --query id -o tsv 2>/dev/null || echo "<object id of $1>"
 }
 
+require_location() {
+  [ -n "$LOCATION" ] || { echo "--location is required to create $1" >&2; exit 1; }
+}
+
 SB=(az servicebus)
+SUB=("${SB[@]}" topic subscription)
+NS_ARGS=(-g "$RG" --namespace-name "$NS")
+
 if ! "${SB[@]}" namespace show -g "$RG" -n "$NS" >/dev/null 2>&1; then
-  [ -n "$LOCATION" ] || { echo "--location is required to create namespace $NS" >&2; exit 1; }
+  require_location "namespace $NS"
   run "${SB[@]}" namespace create -g "$RG" -n "$NS" -l "$LOCATION" --sku Standard --disable-local-auth true
 fi
-run "${SB[@]}" topic create -g "$RG" --namespace-name "$NS" -n "$TOPIC" --default-message-time-to-live "$TTL"
+run "${SB[@]}" topic create "${NS_ARGS[@]}" -n "$TOPIC" --default-message-time-to-live "$TTL"
+TOPIC_ID="$("${SB[@]}" topic show "${NS_ARGS[@]}" -n "$TOPIC" --query id -o tsv 2>/dev/null || echo "<topic id>")"
 
-TOPIC_ID="$("${SB[@]}" topic show -g "$RG" --namespace-name "$NS" -n "$TOPIC" --query id -o tsv 2>/dev/null \
-  || echo "<topic resource id>")"
-SUB=("${SB[@]}" topic subscription)
+if ! az keyvault show -g "$RG" -n "$KV" >/dev/null 2>&1; then
+  require_location "key vault $KV"
+  run az keyvault create -g "$RG" -n "$KV" -l "$LOCATION" --enable-rbac-authorization true --retention-days 7
+fi
+KV_ID="$(az keyvault show -g "$RG" -n "$KV" --query id -o tsv 2>/dev/null || echo "<key vault id>")"
+ADMIN_ID="$(az ad signed-in-user show --query id -o tsv 2>/dev/null || echo "<your object id>")"
+run az role assignment create --assignee-object-id "$ADMIN_ID" --assignee-principal-type User \
+  --role "Key Vault Crypto Officer" --scope "$KV_ID"
+
+if ! az keyvault key show --vault-name "$KV" -n "$KEY" >/dev/null 2>&1; then
+  run_until_authorized az keyvault key create --vault-name "$KV" -n "$KEY" --kty RSA --size 2048 \
+    --ops wrapKey unwrapKey
+fi
+POLICY="{\"lifetimeActions\":[{\"trigger\":{\"timeAfterCreate\":\"$ROTATE\"},\"action\":{\"type\":\"Rotate\"}}],\"attributes\":{\"expiryTime\":\"$EXPIRY\"}}"
+run_until_authorized az keyvault key rotation-policy update --vault-name "$KV" -n "$KEY" --value "$POLICY"
 
 for member in ${MEMBERS[@]+"${MEMBERS[@]}"}; do
   split_member "$member"
   OID="$(object_id "$UPN")"
-  run "${SUB[@]}" create -g "$RG" --namespace-name "$NS" --topic-name "$TOPIC" -n "$HANDLE" \
+  run "${SUB[@]}" create "${NS_ARGS[@]}" --topic-name "$TOPIC" -n "$HANDLE" \
     --default-message-time-to-live "$TTL" --lock-duration PT1M --max-delivery-count 5
-  run "${SUB[@]}" rule create -g "$RG" --namespace-name "$NS" --topic-name "$TOPIC" --subscription-name "$HANDLE" \
-    -n inbox --filter-sql-expression "recipient IS NULL OR recipient = '$HANDLE'"
-  run "${SUB[@]}" rule delete -g "$RG" --namespace-name "$NS" --topic-name "$TOPIC" --subscription-name "$HANDLE" \
-    -n "\$Default" || true
+  RULES=("${SUB[@]}" rule)
+  RULE_ARGS=("${NS_ARGS[@]}" --topic-name "$TOPIC" --subscription-name "$HANDLE")
+  if ! "${RULES[@]}" show "${RULE_ARGS[@]}" -n inbox >/dev/null 2>&1; then
+    run "${RULES[@]}" create "${RULE_ARGS[@]}" -n inbox \
+      --filter-sql-expression "recipient IS NULL OR recipient = '$HANDLE'"
+  fi
+  run "${RULES[@]}" delete "${RULE_ARGS[@]}" -n "\$Default" || true
   run az role assignment create --assignee-object-id "$OID" --assignee-principal-type User \
     --role "Azure Service Bus Data Sender" --scope "$TOPIC_ID"
   run az role assignment create --assignee-object-id "$OID" --assignee-principal-type User \
     --role "Azure Service Bus Data Receiver" --scope "$TOPIC_ID/subscriptions/$HANDLE"
+  run az role assignment create --assignee-object-id "$OID" --assignee-principal-type User \
+    --role "Key Vault Crypto User" --scope "$KV_ID/keys/$KEY"
+  echo "config for $HANDLE: {\"handle\": \"$HANDLE\", \"namespace\": \"$NS\", \"keyVaultUrl\": \"https://$KV.vault.azure.net\"}"
 done
 
 for member in ${REMOVALS[@]+"${REMOVALS[@]}"}; do
@@ -88,7 +144,8 @@ for member in ${REMOVALS[@]+"${REMOVALS[@]}"}; do
   run az role assignment delete --assignee "$OID" --role "Azure Service Bus Data Sender" --scope "$TOPIC_ID"
   run az role assignment delete --assignee "$OID" --role "Azure Service Bus Data Receiver" \
     --scope "$TOPIC_ID/subscriptions/$HANDLE"
-  run "${SUB[@]}" delete -g "$RG" --namespace-name "$NS" --topic-name "$TOPIC" -n "$HANDLE"
+  run az role assignment delete --assignee "$OID" --role "Key Vault Crypto User" --scope "$KV_ID/keys/$KEY"
+  run "${SUB[@]}" delete "${NS_ARGS[@]}" --topic-name "$TOPIC" -n "$HANDLE"
 done
 
 [ "$APPLY" = 1 ] || echo "Dry run only. Re-run with --apply to make these changes."

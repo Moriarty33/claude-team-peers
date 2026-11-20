@@ -1,7 +1,9 @@
-import { AzureCliCredential } from '@azure/identity'
+import type { TokenCredential } from '@azure/identity'
 import { ServiceBusClient, type ServiceBusReceiver, type ServiceBusSender } from '@azure/service-bus'
 import type { Config } from './config.ts'
-import { type Envelope, PRESENCE_TTL_MS, parseEnvelope } from './protocol.ts'
+import type { Sealer } from './crypto.ts'
+import { type Envelope, PRESENCE_TTL_MS } from './protocol.ts'
+import { fromWire, toWire } from './wire.ts'
 
 export type Bus = {
   send(envelope: Envelope): Promise<void>
@@ -13,31 +15,23 @@ function fullyQualifiedNamespace(namespace: string): string {
   return namespace.includes('.') ? namespace : `${namespace}.servicebus.windows.net`
 }
 
-function applicationProperties(envelope: Envelope): Record<string, string> {
-  const properties: Record<string, string> = { kind: envelope.kind, from: envelope.from }
-  if (envelope.kind === 'chat') {
-    if (envelope.to) properties.recipient = envelope.to
-    if (envelope.channel) properties.channel = envelope.channel
-  }
-  return properties
-}
-
-export function createBus(config: Config): Bus {
+export function createBus(config: Config, sealer: Sealer, credential: TokenCredential): Bus {
   const client = config.connectionString
     ? new ServiceBusClient(config.connectionString)
-    : new ServiceBusClient(fullyQualifiedNamespace(config.namespace ?? ''), new AzureCliCredential())
+    : new ServiceBusClient(fullyQualifiedNamespace(config.namespace ?? ''), credential)
   let sender: ServiceBusSender | undefined
   let receiver: ServiceBusReceiver | undefined
 
   return {
     async send(envelope) {
+      const wire = await toWire(sealer, envelope)
       sender ??= client.createSender(config.topic)
       await sender.sendMessages({
         messageId: envelope.id,
-        body: envelope,
+        body: wire.body,
         contentType: 'application/json',
         timeToLive: envelope.kind === 'chat' ? config.messageTtlMs : PRESENCE_TTL_MS,
-        applicationProperties: applicationProperties(envelope),
+        applicationProperties: wire.applicationProperties,
       })
     },
 
@@ -45,7 +39,13 @@ export function createBus(config: Config): Bus {
       receiver = client.createReceiver(config.topic, config.handle)
       receiver.subscribe({
         processMessage: async (message) => {
-          const envelope = parseEnvelope(message.body)
+          let envelope: Envelope | null
+          try {
+            envelope = await fromWire(sealer, message.body, message.applicationProperties)
+          } catch (error) {
+            onError(new Error(`cannot decrypt a message: ${error instanceof Error ? error.message : error}`))
+            return
+          }
           if (envelope) await onEnvelope(envelope)
         },
         processError: async ({ error }) => onError(error),

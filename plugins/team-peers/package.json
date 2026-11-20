@@ -1,6 +1,6 @@
 {
   "name": "team-peers",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Chat between teammates' Claude Code sessions over Azure Service Bus, delivered through Claude Code Channels",
   "type": "module",
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@azure/identity": "4.14.1",
+    "@azure/keyvault-keys": "4.10.2",
     "@azure/service-bus": "7.10.0",
     "@modelcontextprotocol/sdk": "1.32.2"
   },
